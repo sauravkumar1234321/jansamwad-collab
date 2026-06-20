@@ -1,0 +1,55 @@
+# Render Blueprint — Jansamvaad 2.0+
+#
+# One-click deploy of:
+#   1. A managed PostgreSQL database (free for 90 days, then ~$7/mo).
+#   2. A Docker web service built from the repo's Dockerfile (free tier
+#      available — cold-starts after 15 min idle; upgrade to "starter" for
+#      always-on).
+#
+# DATABASE_URL is auto-injected from the database below. The app already
+# rewrites "postgres://" → "postgresql://" in backend/app/database.py, so the
+# value Render provides works as-is.
+#
+# Set GEMINI_API_KEY in the Render dashboard after the first deploy (it is
+# marked `sync: false` so the blueprint never ships a placeholder secret).
+# Without it the app gracefully falls back to the offline rule engine — the
+# /api/health endpoint will report `provider: "rules"` instead of `gemini`.
+
+databases:
+  - name: jansamvaad-db
+    plan: free            # 90-day free trial, then upgrade to "starter"
+    databaseName: complaints
+    user: complaints
+    postgresMajorVersion: "15"
+
+services:
+  - type: web
+    name: jansamvaad
+    runtime: docker
+    plan: free            # upgrade to "starter" to remove cold starts
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Wire the managed Postgres connection string into the app.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: jansamvaad-db
+          property: connectionString
+
+      # LLM engine — Gemini by default (cheapest paid option).
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash-lite
+      - key: GEMINI_EMBED_MODEL
+        value: gemini-embedding-001
+
+      # Secrets: set these in the Render dashboard after first deploy.
+      # `sync: false` means Render will NOT commit a value via the blueprint
+      # and will prompt you for it on first apply.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
