@@ -32,6 +32,7 @@ class EmbeddingIndex:
     def __init__(self) -> None:
         self._vecs: dict[str, list[float]] = {}
         self._cache: dict[str, list[float]] = {}
+        self._fallback = TfidfIndex()
 
     # -- internal embedding with cache ------------------------------------
     def _embed_one(self, text: str) -> list[float]:
@@ -41,6 +42,7 @@ class EmbeddingIndex:
 
     # -- writes ------------------------------------------------------------
     def add(self, doc_id: str, text: str) -> None:
+        self._fallback.add(doc_id, text)
         try:
             self._vecs[doc_id] = self._embed_one(text)
         except Exception:
@@ -49,8 +51,12 @@ class EmbeddingIndex:
 
     def add_many(self, items: list[tuple[str, str]]) -> None:
         """Batch-embed (doc_id, text) pairs in one API call."""
+        self._fallback.add_many(items)
         texts = [t for _, t in items]
-        vectors = gemini.embed_batch(texts)
+        try:
+            vectors = gemini.embed_batch(texts)
+        except Exception:
+            return
         for (doc_id, text), vec in zip(items, vectors):
             self._vecs[doc_id] = vec
             self._cache[text] = vec
@@ -60,7 +66,9 @@ class EmbeddingIndex:
         try:
             q = self._embed_one(text)
         except Exception:
-            return []  # throttled / offline → no similar cases rather than error
+            return self._fallback.similar(text, top_k=top_k, exclude=exclude)
+        if not self._vecs:
+            return self._fallback.similar(text, top_k=top_k, exclude=exclude)
         scored = [
             (doc_id, round(_cosine(q, v), 4))
             for doc_id, v in self._vecs.items()
@@ -71,7 +79,7 @@ class EmbeddingIndex:
 
     def pairwise_similarity(self, a: str, b: str) -> float:
         if a not in self._vecs or b not in self._vecs:
-            return 0.0
+            return self._fallback.pairwise_similarity(a, b)
         return round(_cosine(self._vecs[a], self._vecs[b]), 4)
 
 
